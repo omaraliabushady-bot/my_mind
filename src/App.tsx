@@ -37,7 +37,8 @@ import {
   deleteProjectFromCloud,
   fetchUserProfile,
   saveUserProfileToCloud,
-  bulkSyncTasksToCloud
+  bulkSyncTasksToCloud,
+  subscribeToUserTasks
 } from './lib/supabase';
 import { Navbar } from './components/Navbar';
 import { TaskManagement } from './components/TaskManagement';
@@ -139,23 +140,13 @@ export function App() {
         if (profile.badges) setBadges(profile.badges);
       }
 
-      // 2. Fetch Tasks from cloud
+      // 2. Fetch Tasks from cloud (Strictly isolated by user_id)
       const cloudTasks = await fetchUserTasks(user.id);
-      if (cloudTasks && cloudTasks.length > 0) {
-        setTasks(cloudTasks);
-      } else if (tasks.length > 0) {
-        await bulkSyncTasksToCloud(user.id, tasks);
-      }
+      setTasks(cloudTasks);
 
       // 3. Fetch Projects from cloud
       const cloudProjects = await fetchUserProjects(user.id);
-      if (cloudProjects && cloudProjects.length > 0) {
-        setProjects(cloudProjects);
-      } else if (projects.length > 0) {
-        for (const p of projects) {
-          await saveProjectToCloud(user.id, p);
-        }
-      }
+      setProjects(cloudProjects);
 
       showToast(settings.language === 'ar' ? 'تمت مزامنة البيانات مع السحابة بنجاح ☁️' : 'Synced with cloud successfully ☁️');
     } catch (err) {
@@ -163,13 +154,29 @@ export function App() {
     } finally {
       setIsSyncing(false);
     }
-  }, [tasks, projects, settings.language, showToast]);
+  }, [settings.language, showToast]);
 
   // Initial cloud fetch when user is detected
   useEffect(() => {
     if (currentUser && isSupabaseConfigured()) {
       syncCloudData(currentUser);
     }
+  }, [currentUser?.id]);
+
+  // Real-time synchronization: listen for remote task changes for this user
+  useEffect(() => {
+    if (!currentUser?.id || !isSupabaseConfigured() || !supabase) return;
+
+    const channel = subscribeToUserTasks(currentUser.id, async () => {
+      const freshTasks = await fetchUserTasks(currentUser.id);
+      setTasks(freshTasks);
+    });
+
+    return () => {
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, [currentUser?.id]);
 
   // Global Tab Switching Keyboard Shortcuts (1-5)
